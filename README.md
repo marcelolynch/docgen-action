@@ -67,7 +67,7 @@ If you would like more than just API documentation and a `blueprint` folder, thi
 
 The action builds the homepage on every event that triggers your workflow, so a `pull_request` event validates the Jekyll build before a merge. The API documentation build and the deployment to GitHub Pages run only on `push` events.
 
-If `bundle install` fails in CI, the action diagnoses the failure. It retries with the committed `Gemfile.lock`, retries with a refreshed lockfile, and rebuilds the site to verify the result. When the refreshed lockfile fixes the problem, the action attaches it to the workflow run as the `refreshed-Gemfile.lock` artifact and explains the fix in the run summary. The run still fails, and nothing is relocked silently: download the artifact, review it, and commit it to your homepage folder — or keep your lockfile and set the `ruby-version` input to a Ruby version that the lockfile supports.
+If `bundle install` fails in CI, the action diagnoses the failure. It retries with the committed `Gemfile.lock`, retries with a refreshed lockfile, and rebuilds the site to verify the result. When the refreshed lockfile repairs the install, the action attaches it to the workflow run as the `refreshed-Gemfile.lock` artifact, and the run summary states what the refreshed lockfile fixes and what it does not. The run still fails, and nothing is relocked silently: review and commit the artifact to your homepage folder, or keep your lockfile and set the `ruby-version` input to a Ruby version that the lockfile supports.
 
 ### input: `build-args`
 
