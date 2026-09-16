@@ -4,6 +4,8 @@
 # treat unset variables as an error, and ensure errors in pipelines are not masked.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Build HTML documentation for the project
 # The output will be located in docs/docs
 
@@ -86,13 +88,38 @@ if [ -f ../$REFERENCES ]; then
 fi
 
 # Disable an error message due to a non-blocking bug. See Zulip
-MATHLIB_NO_CACHE_ON_UPDATE=1 ~/.elan/bin/lake update $NAME
+MATHLIB_NO_CACHE_ON_UPDATE=1 ~/.elan/bin/lake update "$NAME"
 
-# Build the docs
-~/.elan/bin/lake build $DOCS_FACETS
+# The `docs` facet writes the HTML in one `fromDb` pass and records the marker
+# `doc-data/<target>.docs_built`. Lake checks the marker and its trace, not the
+# HTML files. The cache restores the marker, so this deletion makes the HTML
+# pass run on every build. See ARCHITECTURE.md.
+rm -f .lake/build/doc-data/*.docs_built .lake/build/doc-data/*.docs_built.trace
+
+read -r -a docs_facets <<< "$DOCS_FACETS"
+
+# Build the docs. doc-gen4 refuses a database written by a version with a
+# different schema. A restored database can hit this when the doc-gen4 revision
+# changes under an unchanged toolchain. In that case, build once more from a
+# clean build directory. Any other failure stops the script.
+build_log=$(mktemp)
+if ! ~/.elan/bin/lake build "${docs_facets[@]}" 2>&1 | tee "$build_log"; then
+  if grep -q "Database schema is outdated" "$build_log"; then
+    echo "::warning::The cached documentation database does not match this doc-gen4 version. Rebuilding the documentation from a clean state."
+    rm -rf .lake/build
+    ~/.elan/bin/lake build "${docs_facets[@]}"
+  else
+    exit 1
+  fi
+fi
+
+# Remove the modules that left the import closure from the database, so that
+# the next build does not link to pages that it does not write.
+python3 "$SCRIPT_DIR/prune_docs_db.py" .lake/build/api-docs.db .lake/build/doc-manifest.json .lake/build/doc-data \
+  || echo "::warning::Could not prune stale modules from the documentation database."
 
 # Copy documentation to `$HOMEPAGE/docs`
 cd ../
-mkdir -p $HOMEPAGE
-sudo chown -R runner $HOMEPAGE
-cp -r docbuild/.lake/build/doc $HOMEPAGE/docs
+mkdir -p "$HOMEPAGE"
+sudo chown -R runner "$HOMEPAGE"
+cp -r docbuild/.lake/build/doc "$HOMEPAGE/docs"
