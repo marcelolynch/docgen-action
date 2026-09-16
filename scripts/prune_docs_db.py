@@ -50,6 +50,9 @@ def main(argv):
         print("prune: the manifest lists no module pages; nothing done", file=sys.stderr)
         return 1
 
+    if not os.path.exists(db_path):
+        print(f"prune: {db_path} does not exist; nothing done", file=sys.stderr)
+        return 1
     conn = sqlite3.connect(db_path)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
