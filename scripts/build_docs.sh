@@ -88,6 +88,20 @@ fi
 # Disable an error message due to a non-blocking bug. See Zulip
 MATHLIB_NO_CACHE_ON_UPDATE=1 ~/.elan/bin/lake update $NAME
 
+# Delete the markers which gate the HTML pass of `doc-gen4`, so that the pass
+# runs on each build.
+#
+# The `:docs` facet writes an empty marker `<target>.docs_built` in
+# `.lake/build/doc-data/` after the pass. Lake skips the pass while the marker
+# exists and its trace matches. The trace changes only with the `doc-gen4`
+# executable and the bibliography. The cache holds the markers and the HTML of
+# the dependencies only, so after a cache hit the pass must run to write the
+# HTML of the project.
+#
+# The pass reads the cached database. It takes about one minute for a project
+# with 3000 modules in its import closure.
+rm -f .lake/build/doc-data/*.docs_built
+
 # Build the docs
 ~/.elan/bin/lake build $DOCS_FACETS
 
