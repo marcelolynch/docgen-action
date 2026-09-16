@@ -3,10 +3,10 @@
 
 Usage: prune_docs_db.py DB MANIFEST DOC_DATA_DIR
 
-`doc-gen4 single` replaces the rows of the module it analyzes. Nothing removes
-the rows of a module that left the closure, for example after a rename in
-Mathlib. `fromDb` resolves links against every module in the database, so a
-stale module can attract links to a page that the build does not write.
+`doc-gen4 single` replaces the rows of the module it analyzes and leaves the
+rows of every other module in place. `fromDb` resolves links against every
+module in the database, so a module outside the closure can attract links to a
+page that the build does not write.
 
 MANIFEST is the `doc-manifest.json` that `fromDb` writes. It lists one HTML
 file per module in the closure, as a path relative to the build directory:

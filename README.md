@@ -131,11 +131,11 @@ Allowed values: `false`, `true`
 
 Default value: `true`
 
-The action stores the doc-gen4 analysis of your project and its dependencies in the GitHub Actions cache, so a run analyzes only the modules that changed. The entry holds the documentation database and its marker files. For a project downstream of Mathlib it is about 130 MB. The key contains the hashes of `lean-toolchain`, `lake-manifest.json` and the references file. A toolchain change starts a new database. A dependency bump reuses the most recent database of the same toolchain.
+The action stores the doc-gen4 analysis of your project and its dependencies in the GitHub Actions cache, so a run analyzes only the modules that changed. The entry holds the documentation database and its marker files. For example, for a project that depends on Mathlib, it is less than 130 MB. The key contains the hashes of `lean-toolchain`, `lake-manifest.json` and the references file. A toolchain change starts a new database. A dependency bump reuses the most recent database of the same toolchain.
 
-Set this input to `false` to build without the cache. Every run then analyzes all dependencies, which takes about an hour for a project downstream of Mathlib.
+Set this input to `false` to build without the cache. Every run then analyzes all dependencies, which takes 40 minutes or more for a project that depends on Mathlib, for example.
 
-GitHub limits the cache of a repository to 10 GB and evicts the least recently used entries beyond that. `leanprover/lean-action` stores the whole `.lake` directory, including the Mathlib oleans, under a new key for each commit. If your documentation cache disappears between runs, check the cache usage of your repository with `gh api repos/<owner>/<repo>/actions/cache/usage` and consider `use-github-cache: false` on lean-action. The Mathlib oleans come from the Mathlib cache in either case. See [ARCHITECTURE.md](ARCHITECTURE.md) for the design of the cache.
+GitHub limits the cache of a repository to 10 GB and evicts the least recently used entries beyond that. `leanprover/lean-action` stores the whole `.lake` directory under a new key for each commit. For a project that depends on Mathlib, for example, each entry holds the Mathlib oleans and has a size of several gigabytes. If your documentation cache disappears between runs, check the cache usage of your repository with `gh api repos/<owner>/<repo>/actions/cache/usage` and consider `use-github-cache: false` on lean-action. For a project that depends on Mathlib, the Mathlib oleans come from the Mathlib cache in either case, and the cost of that setting is a rebuild of your own modules on each run. See [INTERNALS.md](INTERNALS.md) for the design of the cache.
 
 ## Deprecated Parameters
 

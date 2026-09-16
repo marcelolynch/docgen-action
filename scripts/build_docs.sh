@@ -93,7 +93,7 @@ MATHLIB_NO_CACHE_ON_UPDATE=1 ~/.elan/bin/lake update "$NAME"
 # The `docs` facet writes the HTML in one `fromDb` pass and records the marker
 # `doc-data/<target>.docs_built`. Lake checks the marker and its trace, not the
 # HTML files. The cache restores the marker, so this deletion makes the HTML
-# pass run on every build. See ARCHITECTURE.md.
+# pass run on every build. See INTERNALS.md.
 rm -f .lake/build/doc-data/*.docs_built .lake/build/doc-data/*.docs_built.trace
 
 read -r -a docs_facets <<< "$DOCS_FACETS"
@@ -114,7 +114,7 @@ if ! ~/.elan/bin/lake build "${docs_facets[@]}" 2>&1 | tee "$build_log"; then
 fi
 
 # Remove the modules that left the import closure from the database, so that
-# the next build does not link to pages that it does not write.
+# the next build links only to pages that it writes.
 python3 "$SCRIPT_DIR/prune_docs_db.py" .lake/build/api-docs.db .lake/build/doc-manifest.json .lake/build/doc-data \
   || echo "::warning::Could not prune stale modules from the documentation database."
 
