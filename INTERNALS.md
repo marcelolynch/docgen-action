@@ -35,12 +35,14 @@ then one `lake build` with the `docs` facet of each default target.
 
 doc-gen4 builds the documentation in two phases.
 
-The analysis phase. The `docInfo` facet of each module runs `doc-gen4 single`,
-which writes the declarations of the module into the SQLite database
-`docbuild/.lake/build/api-docs.db`. Lake gates the facet on the marker file
-`doc-data/<Module>.doc` and its trace. The trace covers the doc-gen4
-executable, the bibliography prepass (which reads the references file), the
-core documentation, the `docInfo` marker of each import, and the oleans of the
+The analysis phase. The `bibPrepass` target reads the references file and
+writes `doc-data/references.json` and a copy for download at
+`doc/references.bib`. Lake gates it on the first file only. The `docInfo`
+facet of each module runs `doc-gen4 single`, which writes the declarations of
+the module into the SQLite database `docbuild/.lake/build/api-docs.db`. Lake
+gates the facet on the marker file `doc-data/<Module>.doc` and its trace. The
+trace covers the doc-gen4 executable, the bibliography prepass, the core
+documentation, the `docInfo` marker of each import, and the oleans of the
 module. The `coreDocs` target does the same for `Init`, `Std`, `Lake` and
 `Lean`, with the markers `doc-data/core-<Name>.doc`. This phase does most of
 the work, and its cost grows with the import closure. For example, for a
@@ -53,8 +55,9 @@ modules of the target. `fromDb` computes the transitive import closure from the
 database, writes the page of every module in the closure, the search index, the
 navigation bar and the static files, and lists the module pages in
 `doc-manifest.json`. Lake gates this facet on the marker
-`doc-data/<name>.docs_built`. The phase takes about a minute for a closure of
-three thousand modules.
+`doc-data/<name>.docs_built`, and it computes the trace of each static file,
+including `doc/references.bib`. The phase takes about a minute for a closure
+of three thousand modules.
 
 The HTML is a function of the database. The database is the expensive state.
 
@@ -66,6 +69,9 @@ The cache holds the analysis state:
   files when they exist.
 - `docbuild/.lake/build/doc-data`: the marker files with their traces, and the
   output of the bibliography prepass.
+- `docbuild/.lake/build/doc/references.bib`: the copy of the references file
+  that the bibliography prepass writes. The HTML phase traces this file, and a
+  warm run does not run the prepass again.
 
 For example, an entry for a project that depends on Mathlib is less than
 130 MB compressed.
@@ -74,7 +80,7 @@ The cache leaves out the HTML directory `docbuild/.lake/build/doc` for three
 reasons. `fromDb` writes it in about a minute. The navigation bar and the
 search index include every module page found on disk, so a restored page of a
 module outside the closure would appear in both. And the set of files that
-doc-gen4 writes belongs to doc-gen4, while the two paths above are stable
+doc-gen4 writes belongs to doc-gen4, while the three paths above are stable
 across its versions.
 
 ## The cache key

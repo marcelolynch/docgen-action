@@ -131,7 +131,7 @@ Allowed values: `false`, `true`
 
 Default value: `true`
 
-The action stores the doc-gen4 analysis of your project and its dependencies in the GitHub Actions cache, so a run analyzes only the modules that changed. The entry holds the documentation database and its marker files. For example, for a project that depends on Mathlib, it is less than 130 MB. The key contains the hashes of `lean-toolchain`, `lake-manifest.json` and the references file. A toolchain change starts a new database. A dependency bump reuses the most recent database of the same toolchain.
+The action stores the doc-gen4 analysis of your project and its dependencies in the GitHub Actions cache, so a run analyzes only the modules that changed. The entry holds the documentation database, its marker files and the output of the bibliography prepass. For example, for a project that depends on Mathlib, it is less than 130 MB. The key contains the hashes of `lean-toolchain`, `lake-manifest.json` and the references file. A toolchain change starts a new database. A dependency bump reuses the most recent database of the same toolchain.
 
 Set this input to `false` to build without the cache. Every run then analyzes all dependencies, which takes 40 minutes or more for a project that depends on Mathlib, for example.
 

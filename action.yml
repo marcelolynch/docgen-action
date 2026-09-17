@@ -86,9 +86,10 @@ runs:
       working-directory: ${{ env.LAKE_PACKAGE_DIRECTORY }}
 
     - name: Cache the documentation database
-      # The cache holds the analysis state of doc-gen4: the SQLite database and
-      # the per-module marker files. The build writes the HTML again from the
-      # database on each run. See INTERNALS.md.
+      # The cache holds the analysis state of doc-gen4: the SQLite database,
+      # the per-module marker files, and the copy of the references file that
+      # the bibliography prepass writes. The build writes the HTML again from
+      # the database on each run. See INTERNALS.md.
       # TODO: When dropping deprecation support, change env.API_DOCS back to
       # inputs.api-docs and env.LAKE_PACKAGE_DIRECTORY back to inputs.lake-package-directory.
       if: |
@@ -99,6 +100,7 @@ runs:
         path: |
           docbuild/.lake/build/api-docs.db*
           docbuild/.lake/build/doc-data
+          docbuild/.lake/build/doc/references.bib
         # The toolchain selects the doc-gen4 revision, and the database format
         # belongs to that revision, so a toolchain change starts a new database.
         # A change of the manifest or of the references file changes the exact
