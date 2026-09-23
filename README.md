@@ -131,11 +131,11 @@ Allowed values: `false`, `true`
 
 Default value: `true`
 
-The action stores the doc-gen4 analysis of your project and its dependencies in the GitHub Actions cache, so a run analyzes only the modules that changed. The entry holds the documentation database, its marker files and the output of the bibliography prepass. For example, for a project that depends on Mathlib, it is less than 130 MB. The key contains the hashes of `lean-toolchain`, `lake-manifest.json` and the references file. A toolchain change starts a new database. A dependency bump reuses the most recent database of the same toolchain.
+The cache lets doc-gen4 reuse the analysis of unchanged modules. Each build generates the HTML and search data again. The key includes the toolchain, dependency manifest, and references file. If the exact key is absent, the action can reuse an entry for the same toolchain.
 
-Set this input to `false` to build without the cache. Every run then analyzes all dependencies, which takes 40 minutes or more for a project that depends on Mathlib, for example.
+Set this input to `false` to disable the GitHub Actions cache for documentation analysis. Large dependency sets can take much longer to build. See [INTERNALS.md](INTERNALS.md) for the cache requirements and measurements.
 
-GitHub limits the cache of a repository to 10 GB and evicts the least recently used entries beyond that. `leanprover/lean-action` stores the whole `.lake` directory under a new key for each commit. For a project that depends on Mathlib, for example, each entry holds the Mathlib oleans and has a size of several gigabytes. If your documentation cache disappears between runs, check the cache usage of your repository with `gh api repos/<owner>/<repo>/actions/cache/usage` and consider `use-github-cache: false` on lean-action. For a project that depends on Mathlib, the Mathlib oleans come from the Mathlib cache in either case, and the cost of that setting is a rebuild of your own modules on each run. See [INTERNALS.md](INTERNALS.md) for the design of the cache.
+Other workflow caches share the repository's cache capacity. If documentation builds repeatedly miss the cache, inspect the entries with `gh cache list`. Large `.lake` caches can displace the documentation cache. Consider disabling the cache in `leanprover/lean-action` if its saved build time does not justify that storage.
 
 ## Deprecated Parameters
 

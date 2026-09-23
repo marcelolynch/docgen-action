@@ -86,10 +86,8 @@ runs:
       working-directory: ${{ env.LAKE_PACKAGE_DIRECTORY }}
 
     - name: Cache the documentation database
-      # The cache holds the analysis state of doc-gen4: the SQLite database,
-      # the per-module marker files, and the copy of the references file that
-      # the bibliography prepass writes. The build writes the HTML again from
-      # the database on each run. See INTERNALS.md.
+      # Cache analysis results for reuse; each build derives the site from them.
+      # See INTERNALS.md for the required doc-gen4 behavior.
       # TODO: When dropping deprecation support, change env.API_DOCS back to
       # inputs.api-docs and env.LAKE_PACKAGE_DIRECTORY back to inputs.lake-package-directory.
       if: |
@@ -99,16 +97,18 @@ runs:
       with:
         path: |
           docbuild/.lake/build/api-docs.db*
-          docbuild/.lake/build/doc-data
+          docbuild/.lake/build/doc-data/*.doc
+          docbuild/.lake/build/doc-data/*.doc.trace
+          docbuild/.lake/build/doc-data/*.doc.hash
+          docbuild/.lake/build/doc-data/*--library.modules
+          docbuild/.lake/build/doc-data/references.json*
           docbuild/.lake/build/doc/references.bib
-        # The toolchain selects the doc-gen4 revision, and the database format
-        # belongs to that revision, so a toolchain change starts a new database.
-        # A change of the manifest or of the references file changes the exact
-        # key. The fallback prefix then restores the most recent database of the
-        # same toolchain, and Lake analyzes only the modules whose trace changed.
-        key: docs-db-v1-${{ hashFiles(format('{0}/lean-toolchain', env.LAKE_PACKAGE_DIRECTORY)) }}-${{ hashFiles(format('{0}/lake-manifest.json', env.LAKE_PACKAGE_DIRECTORY), inputs.references) }}
+        # The script normally selects the doc-gen4 tag that matches lean-toolchain.
+        # On an exact miss, actions/cache restores the newest accessible entry whose
+        # key starts with restore-keys. The prefix limits reuse to this toolchain.
+        key: docs-db-v2-${{ hashFiles(format('{0}/lean-toolchain', env.LAKE_PACKAGE_DIRECTORY)) }}-${{ hashFiles(format('{0}/lake-manifest.json', env.LAKE_PACKAGE_DIRECTORY), inputs.references) }}
         restore-keys: |
-          docs-db-v1-${{ hashFiles(format('{0}/lean-toolchain', env.LAKE_PACKAGE_DIRECTORY)) }}-
+          docs-db-v2-${{ hashFiles(format('{0}/lean-toolchain', env.LAKE_PACKAGE_DIRECTORY)) }}-
 
     - name: Check for ${{ inputs.homepage }} folder # this is meant to detect a Jekyll-based website
       id: check_docs

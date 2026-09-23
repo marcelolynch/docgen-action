@@ -4,10 +4,8 @@
 # treat unset variables as an error, and ensure errors in pipelines are not masked.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 # Build HTML documentation for the project
-# The output will be located in docs/docs
+# Copy the generated site to `$HOMEPAGE/docs`.
 
 # Determine the `doc-gen4` revision to use as a dependency,
 # based on the `lean-toolchain` of this project:
@@ -82,20 +80,26 @@ EOF
 cd docbuild
 
 # Place references.bib in the location expected by doc-gen4
-if [ -f ../$REFERENCES ]; then
+if [ -f "../$REFERENCES" ]; then
   mkdir -p docs
-  cp ../$REFERENCES ./docs/references.bib
+  cp "../$REFERENCES" ./docs/references.bib
 fi
 
 # Disable an error message due to a non-blocking bug. See Zulip
 MATHLIB_NO_CACHE_ON_UPDATE=1 ~/.elan/bin/lake update "$NAME"
 
-# The `docs` facet writes the HTML in one `fromDb` pass and records the marker
-# `doc-data/<target>.docs_built`. Lake checks the marker and its trace, not the
-# HTML files. The cache restores the marker, so this deletion makes the HTML
-# pass run on every build. See INTERNALS.md.
-rm -f .lake/build/doc-data/*.docs_built .lake/build/doc-data/*.docs_built.trace
+# Keep the bibliography copy: Lake can reuse its analysis without writing it again.
+# Render into a clean directory so removed modules leave the site in this build.
+if [ -d .lake/build/doc ]; then
+  find .lake/build/doc -mindepth 1 -maxdepth 1 ! -name references.bib -exec rm -rf {} +
+fi
+rm -f .lake/build/doc-data/declaration-data-*.bmp .lake/build/doc-data/backrefs-*.json
+# Unchanged analysis can leave these markers valid even when the HTML is absent.
+rm -f .lake/build/doc-data/*.docs_built{,.trace,.hash}
+rm -f .lake/build/doc-data/*.docsHeader_built{,.trace,.hash}
 
+# DOCS_FACETS is supplied by action.yml.
+# shellcheck disable=SC2153
 read -r -a docs_facets <<< "$DOCS_FACETS"
 
 # Build the docs. doc-gen4 refuses a database written by a version with a
@@ -103,6 +107,7 @@ read -r -a docs_facets <<< "$DOCS_FACETS"
 # changes under an unchanged toolchain. In that case, build once more from a
 # clean build directory. Any other failure stops the script.
 build_log=$(mktemp)
+trap 'rm -f "$build_log"' EXIT
 if ! ~/.elan/bin/lake build "${docs_facets[@]}" 2>&1 | tee "$build_log"; then
   if grep -q "Database schema is outdated" "$build_log"; then
     echo "::warning::The cached documentation database does not match this doc-gen4 version. Rebuilding the documentation from a clean state."
@@ -113,13 +118,10 @@ if ! ~/.elan/bin/lake build "${docs_facets[@]}" 2>&1 | tee "$build_log"; then
   fi
 fi
 
-# Remove the modules that left the import closure from the database, so that
-# the next build links only to pages that it writes.
-python3 "$SCRIPT_DIR/prune_docs_db.py" .lake/build/api-docs.db .lake/build/doc-manifest.json .lake/build/doc-data \
-  || echo "::warning::Could not prune stale modules from the documentation database."
-
 # Copy documentation to `$HOMEPAGE/docs`
 cd ../
 mkdir -p "$HOMEPAGE"
 sudo chown -R runner "$HOMEPAGE"
+# Replace the published API directory when the workspace already contains it.
+rm -rf -- "$HOMEPAGE/docs"
 cp -r docbuild/.lake/build/doc "$HOMEPAGE/docs"

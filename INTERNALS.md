@@ -1,175 +1,101 @@
-# Internals
+# Documentation cache
 
-This document describes how the action builds the API documentation and what
-the GitHub Actions cache holds. It is for maintainers of the action. The README
-describes the inputs.
+Module analysis is the expensive part of a documentation build. doc-gen4 stores
+that analysis in a SQLite database and derives the site from it. The cache
+preserves the analysis so that a dependency update only requires work for the
+modules whose inputs change.
 
-## Pipeline
+The site must describe the current build. Before `lake build` runs, the build script
+removes generated pages, per-module search data, and HTML completion markers.
+It preserves the bibliography copy because the bibliography step can remain
+up to date. This also handles files restored by another cache or left in a
+reused workspace.
 
-The action is a composite action. `action.yml` runs these steps in order:
+## Required doc-gen4 behavior
 
-1. `dist/deprecation.js` maps the deprecated input names to environment variables.
-2. `dist/index.js` reads `lakefile.toml` and publishes the package name and the
-   `docs` facet of each default target.
-3. `actions/cache` restores the documentation database. This step runs for
-   `push` events when `use-github-cache` and `api-docs` are true.
-4. The blueprint step builds the blueprint when `blueprint` is true.
-5. `scripts/build_docs.sh` builds the API documentation and copies the HTML to
-   `<homepage>/docs`. This step runs for `push` events when `api-docs` is true.
-6. Ruby and Jekyll build the homepage when `build-page` is true and the
-   homepage folder exists.
-7. The action uploads the site and deploys it to GitHub Pages for `push`
-   events when `deploy` is true.
-8. The post step of `actions/cache` saves the documentation database when the
-   job succeeds and the exact key was absent.
+This action assumes a doc-gen4 revision with these upstream fixes:
 
-## The docs build
+- [#416](https://github.com/leanprover/doc-gen4/pull/416) restricts declaration
+  links to modules with pages in the output.
+- [#418](https://github.com/leanprover/doc-gen4/pull/418) makes analysis changes
+  invalidate the HTML step.
+- [#419](https://github.com/leanprover/doc-gen4/pull/419) removes obsolete modules
+  from each library before the HTML step.
 
-`build_docs.sh` creates a Lake package in `docbuild/` in the workspace. Its
-`lakefile.toml` requires the project by path and `doc-gen4` at the revision that
-matches `lean-toolchain`: the tag `vX.Y.Z` or `vX.Y.Z-rcN` for a release
-toolchain, the branch `nightly-testing` for a nightly, and `main` otherwise.
-The package shares `.lake/packages` with the project, so Lake clones each
-dependency once. The script runs `lake update <project>` and
-then one `lake build` with the `docs` facet of each default target.
+These fixes must be available in the revision selected for the project's
+toolchain. The script normally requests the matching release tag. For nightly
+and other toolchains, it requests `nightly-testing` and `main`, respectively.
+A toolchain therefore constrains cache reuse, but does not identify an immutable
+doc-gen4 revision in every case.
 
-doc-gen4 builds the documentation in two phases.
+The action leaves database cleanup to doc-gen4. A removed library or dependency
+can leave unused rows in the database. The script removes their generated pages and search data before the build. The link filter excludes
+their declarations from link resolution. The action does not prune
+against `doc-manifest.json`: each HTML invocation describes only its own roots,
+so that file cannot identify every live module in a build with several targets.
 
-The analysis phase. The `bibPrepass` target reads the references file and
-writes `doc-data/references.json` and a copy for download at
-`doc/references.bib`. Lake gates it on the first file only. The `docInfo`
-facet of each module runs `doc-gen4 single`, which writes the declarations of
-the module into the SQLite database `docbuild/.lake/build/api-docs.db`. Lake
-gates the facet on the marker file `doc-data/<Module>.doc` and its trace. The
-trace covers the doc-gen4 executable, the bibliography prepass, the core
-documentation, the `docInfo` marker of each import, and the oleans of the
-module. The `coreDocs` target does the same for `Init`, `Std`, `Lake` and
-`Lean`, with the markers `doc-data/core-<Name>.doc`. This phase does most of
-the work, and its cost grows with the import closure. For example, for a
-project that depends on Mathlib and imports about three thousand of its
-modules, the analysis of the dependencies takes about 40 minutes on a GitHub
-runner.
+## Cached state
 
-The HTML phase. The `docs` facet runs `doc-gen4 fromDb` once with the root
-modules of the target. `fromDb` computes the transitive import closure from the
-database, writes the page of every module in the closure, the search index, the
-navigation bar and the static files, and lists the module pages in
-`doc-manifest.json`. Lake gates this facet on the marker
-`doc-data/<name>.docs_built`, and it computes the trace of each static file,
-including `doc/references.bib`. The phase takes about a minute for a closure
-of three thousand modules.
+All paths below are relative to `docbuild/.lake/build`:
 
-The HTML is a function of the database. The database is the expensive state.
+- `api-docs.db*` holds the database and any SQLite write-ahead log files.
+- `doc-data/*.doc`, `*.doc.trace`, and `*.doc.hash` record completed analysis
+  and its inputs. Lake uses them to decide which modules need analysis.
+- `doc-data/*--library.modules` records the module lists used for library cleanup.
+- `doc-data/references.json*` holds the bibliography data and its Lake trace files.
+- `doc/references.bib` is the downloadable bibliography copy.
 
-## What the cache holds
+HTML, per-module search data, and HTML completion markers are derived output.
+The cache excludes them. The script also clears them before each build so that
+cache restoration and local reuse have the same behavior.
 
-The cache holds the analysis state:
+## Cache reuse and recovery
 
-- `docbuild/.lake/build/api-docs.db*`: the database, and its write-ahead log
-  files when they exist.
-- `docbuild/.lake/build/doc-data`: the marker files with their traces, and the
-  output of the bibliography prepass.
-- `docbuild/.lake/build/doc/references.bib`: the copy of the references file
-  that the bibliography prepass writes. The HTML phase traces this file, and a
-  warm run does not run the prepass again.
+The exact key contains a format version, the hash of `lean-toolchain`, and a hash
+of `lake-manifest.json` plus the references file. The toolchain and manifest
+paths use `lake-package-directory`; the references path uses the workspace.
 
-For example, an entry for a project that depends on Mathlib is less than
-130 MB compressed.
+On an exact miss, `actions/cache` uses `restore-keys` to find an accessible entry
+whose key starts with the supplied prefix. It restores the newest matching
+entry. The prefix includes the toolchain hash, so a dependency update can reuse
+analysis from the same toolchain. Lake checks the restored analysis traces
+against the current inputs.
 
-The cache leaves out the HTML directory `docbuild/.lake/build/doc` for three
-reasons. `fromDb` writes it in about a minute. The navigation bar and the
-search index include every module page found on disk, so a restored page of a
-module outside the closure would appear in both. And the set of files that
-doc-gen4 writes belongs to doc-gen4, while the three paths above are stable
-across its versions.
+A successful job saves a new entry when the exact key was absent. An exact hit
+keeps its existing entry. Cache format version `v2` separates this file list
+from entries that include derived output.
 
-## The cache key
+If doc-gen4 reports `Database schema is outdated`, the script discards the
+restored build directory and retries once. Other build failures stop the job.
+A failure on the retry also stops the job. The upstream schema check must report
+incompatibility before it attempts operations that require the new schema.
 
-The exact key is
+## Measurements and cache capacity
 
-    docs-db-v1-<hash of lean-toolchain>-<hash of lake-manifest.json and the references file>
+Measurements on the earlier draft illustrate the cost of analysis and HTML
+generation; they do not validate the upstream integration described above.
 
-and the fallback prefix is
+On Noperthedron, analysis of 2936 dependency modules took 28 minutes, and core
+analysis took 13 minutes. HTML generation took about 70 seconds. A dependency
+update increased the workflow duration from 17 to 52 minutes without cache
+reuse across manifests.
 
-    docs-db-v1-<hash of lean-toolchain>-
+[Playground runs](https://github.com/marcelolynch/LeanDownstreamPlayground/actions?query=branch%3Adocs-cache-experiments)
+with about 1100 Mathlib modules produced 3121 pages. The cold documentation step
+took 8 minutes and analyzed 609 modules plus core. A dependency update analyzed
+one module in 2 minutes 13 seconds. An exact cache hit analyzed none in
+2 minutes 11 seconds. HTML generation took about 43 seconds; compilation of
+doc-gen4 took about 85 seconds on a warm run. The cache occupied 37 MB, compared
+with 51 MB for the HTML cache. A larger Mathlib cache stayed under 130 MB.
 
-`hashFiles` resolves `lean-toolchain` and `lake-manifest.json` relative to the
-Lake package directory, and the references file relative to the workspace.
+Repository caches share a capacity limit. Large `.lake` entries can displace
+the documentation cache. Inspect cache usage before disabling other caches:
 
-The toolchain hash comes first because the toolchain selects the doc-gen4
-revision, and the database format belongs to that revision. doc-gen4 stores a
-hash of its schema in the database and refuses a database with a different
-hash. A toolchain change therefore starts a new database.
+```sh
+gh cache list
+gh api repos/<owner>/<repo>/actions/cache/usage
+```
 
-A change of the manifest, such as a dependency bump, or of the references
-file changes the exact key. The fallback prefix restores the most recent database of
-the same toolchain, and Lake analyzes only the modules whose trace changed.
-`actions/cache` saves the result under the exact key at the end of the job.
-
-The segment `v1` marks the meaning of the cached paths. Change it when the set
-of paths or the way the scripts use them changes.
-
-## Invariants that `build_docs.sh` maintains
-
-Three steps in `build_docs.sh` keep the restored state consistent with the
-build.
-
-The HTML phase runs on every build. The script deletes the `*.docs_built`
-markers and their traces before `lake build`. Lake checks the marker and its
-trace, not the HTML files, so a restored marker would skip `fromDb`.
-
-An incompatible database triggers one clean rebuild. When `lake build` fails
-and its output contains `Database schema is outdated`, the script deletes
-`docbuild/.lake/build` and builds once more. Any other failure stops the
-script. The toolchain segment of the key makes this case rare. It remains
-possible under the `main` and `nightly-testing` fallbacks, where the doc-gen4
-revision can change under a fixed key.
-
-Stale modules leave the database. `single` replaces the rows of the module it
-analyzes, and nothing removes the rows of a module that left the closure, for
-example after a dependency renames a module. `fromDb` resolves links against every module
-in the database, so a stale module can attract links to a page that the build
-does not write. After the build, `scripts/prune_docs_db.py` reads the module
-pages from `doc-manifest.json`, deletes every other module from the `modules`
-table, and deletes their marker files. The schema cascades the deletion to the
-declaration tables. The marker deletion means that a module removed by mistake
-is analyzed again in the next build. The script changes nothing when the
-manifest names no module of the database.
-
-`actions/cache` saves only when the job succeeds, so a failed build does not
-persist a partial database.
-
-## The repository cache limit
-
-GitHub keeps at most 10 GB of cache per repository by default and evicts the
-least recently used entries beyond that. The documentation database is small
-next to that limit. `leanprover/lean-action` caches the whole `.lake`
-directory, with the build outputs of every dependency, under a key that
-contains the commit hash. For example, for a project that depends on Mathlib,
-each entry holds the Mathlib oleans that lean-action downloads with
-`lake exe cache get`, each push adds an entry of several gigabytes, and a few
-pushes evict the documentation database.
-
-A project that sees a full analysis on every run with an unchanged manifest
-should check the cache usage of the repository:
-
-    gh api repos/<owner>/<repo>/actions/cache/usage
-    gh api repos/<owner>/<repo>/actions/caches
-
-If the `lake-*` entries fill the limit, `use-github-cache: false` on
-lean-action keeps the documentation database alive. The cost of that setting
-depends on the dependencies. Lake builds a dependency from source on each run,
-except when the dependency has its own cache: for a project that depends on
-Mathlib, the Mathlib oleans come from the Mathlib cache, and the cost is that
-download plus a rebuild of the project's own modules.
-
-## Limits and directions
-
-The action analyzes the dependencies once per toolchain and per project.
-doc-gen4 tracks two changes that would remove that cost: per-package databases
-distributed with the cache of a dependency, such as the Mathlib cache (see the
-section "Incrementality and
-Caching" of leanprover/doc-gen4#347), and interproject linking, which writes
-pages for the project's modules only and links to the published documentation
-of the dependencies (leanprover/doc-gen4#396). Both reduce the state that this
-cache holds. Neither changes what the cache is for.
+Disabling the cache in `leanprover/lean-action` trades storage for build work.
+Mathlib can download its own compiled artifacts. Dependencies without an
+artifact cache need a source build on each run.
