@@ -3,7 +3,6 @@
 Module analysis is expensive; HTML generation is comparatively cheap. The action
 caches analysis so that a dependency update can reuse work for unchanged modules.
 It generates the pages and search index again to avoid publishing obsolete files.
-[Measurements](docs/cache-measurements.md) illustrate this tradeoff.
 
 ## Requirements
 
