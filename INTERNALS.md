@@ -1,95 +1,72 @@
 # Documentation cache
 
-Module analysis is the expensive part of a documentation build. doc-gen4 stores
-that analysis in a SQLite database and derives the site from it. The cache
-preserves the analysis so that a dependency update only requires work for the
-modules whose inputs change.
+Module analysis is expensive; HTML generation is comparatively cheap. The action
+caches analysis so that a dependency update can reuse work for unchanged modules.
+It generates the pages and search index again to avoid publishing obsolete files.
+[Measurements](docs/cache-measurements.md) illustrate this tradeoff.
 
-The site must describe the current build. Before `lake build` runs, the build script
-removes generated pages, per-module search data, and HTML completion markers.
-It preserves the bibliography copy because the bibliography step can remain
-up to date. This also handles files restored by another cache or left in a
-reused workspace.
+## Requirements
 
-## Required doc-gen4 behavior
+The action relies on doc-gen4 to validate analysis inputs, resolve links, and
+remove obsolete modules. It assumes these upstream fixes are available in the
+revision selected for the project:
 
-This action assumes a doc-gen4 revision with these upstream fixes:
+- [#416](https://github.com/leanprover/doc-gen4/pull/416): declaration lookup uses
+  modules with pages in the output.
+- [#418](https://github.com/leanprover/doc-gen4/pull/418): analysis changes
+  invalidate HTML generation.
+- [#419](https://github.com/leanprover/doc-gen4/pull/419): library cleanup removes
+  obsolete modules before HTML generation.
 
-- [#416](https://github.com/leanprover/doc-gen4/pull/416) restricts declaration
-  links to modules with pages in the output.
-- [#418](https://github.com/leanprover/doc-gen4/pull/418) makes analysis changes
-  invalidate the HTML step.
-- [#419](https://github.com/leanprover/doc-gen4/pull/419) removes obsolete modules
-  from each library before the HTML step.
+Library cleanup must preserve modules explicitly requested for documentation.
+Schema validation must report an incompatible database before it attempts
+operations that require the new schema. These are prerequisites for integration
+with #419.
 
-These fixes must be available in the revision selected for the project's
-toolchain. The script normally requests the matching release tag. For nightly
-and other toolchains, it requests `nightly-testing` and `main`, respectively.
-A toolchain therefore constrains cache reuse, but does not identify an immutable
-doc-gen4 revision in every case.
+## What must stay consistent
 
-The action leaves database cleanup to doc-gen4. A removed library or dependency
-can leave unused rows in the database. The script removes their generated pages and search data before the build. The link filter excludes
-their declarations from link resolution. The action does not prune
-against `doc-manifest.json`: each HTML invocation describes only its own roots,
-so that file cannot identify every live module in a build with several targets.
+The database and analysis markers form one cache entry. Lake uses the markers to
+check which modules need analysis; a marker without the corresponding database
+rows can cause Lake to skip necessary work. Library module lists and bibliography
+data belong to the same entry. The exact file patterns are in `action.yml`.
 
-## Cached state
+Generated pages and search data must describe the current build. The script
+clears those files and their completion markers before HTML generation. It also
+replaces the published API directory after a successful build. The bibliography
+copy is preserved because Lake can skip its generation when its inputs are unchanged.
 
-All paths below are relative to `docbuild/.lake/build`:
+Database cleanup belongs to doc-gen4, which knows the modules of each library.
+An HTML manifest describes one invocation's roots, so the action cannot use it
+to decide which database rows are obsolete across several documentation targets.
 
-- `api-docs.db*` holds the database and any SQLite write-ahead log files.
-- `doc-data/*.doc`, `*.doc.trace`, and `*.doc.hash` record completed analysis
-  and its inputs. Lake uses them to decide which modules need analysis.
-- `doc-data/*--library.modules` records the module lists used for library cleanup.
-- `doc-data/references.json*` holds the bibliography data and its Lake trace files.
-- `doc/references.bib` is the downloadable bibliography copy.
+A removed dependency can leave unused database rows. Fresh search data excludes
+its declarations, and #416 filters declaration lookup. This does not cover every
+link: the tactics page reads all stored tactics and constructs definition links
+directly. Dropped dependencies can therefore leave stale tactic entries and
+broken links. That upstream limitation remains open.
 
-HTML, per-module search data, and HTML completion markers are derived output.
-The cache excludes them. The script also clears them before each build so that
-cache restoration and local reuse have the same behavior.
+## Reuse and recovery
 
-## Cache reuse and recovery
+A dependency update should preserve reusable analysis, while a toolchain change
+should start a separate cache. On an exact cache miss, `actions/cache` restores
+the newest accessible entry whose key starts with the supplied `restore-keys`
+prefix. That prefix includes the toolchain hash. Lake checks the restored
+analysis against the current inputs.
 
-The exact key contains a format version, the hash of `lean-toolchain`, and a hash
-of `lake-manifest.json` plus the references file. The toolchain and manifest
-paths use `lake-package-directory`; the references path uses the workspace.
+The script normally selects the doc-gen4 release tag that matches the toolchain.
+Its `main` and `nightly-testing` choices can move, so the toolchain hash alone
+does not guarantee database compatibility. When doc-gen4 reports
+`Database schema is outdated`, the action discards the build directory and retries
+once. Other failures, including a failed retry, stop the build.
 
-On an exact miss, `actions/cache` uses `restore-keys` to find an accessible entry
-whose key starts with the supplied prefix. It restores the newest matching
-entry. The prefix includes the toolchain hash, so a dependency update can reuse
-analysis from the same toolchain. Lake checks the restored analysis traces
-against the current inputs.
+An exact cache hit keeps its existing entry. A successful job saves a new entry
+when the exact key was absent. Change the cache format version when the required
+file set or its interpretation changes.
 
-A successful job saves a new entry when the exact key was absent. An exact hit
-keeps its existing entry. Cache format version `v2` separates this file list
-from entries that include derived output.
+## Cache capacity
 
-If doc-gen4 reports `Database schema is outdated`, the script discards the
-restored build directory and retries once. Other build failures stop the job.
-A failure on the retry also stops the job. The upstream schema check must report
-incompatibility before it attempts operations that require the new schema.
-
-## Measurements and cache capacity
-
-Measurements on the earlier draft illustrate the cost of analysis and HTML
-generation; they do not validate the upstream integration described above.
-
-On Noperthedron, analysis of 2936 dependency modules took 28 minutes, and core
-analysis took 13 minutes. HTML generation took about 70 seconds. A dependency
-update increased the workflow duration from 17 to 52 minutes without cache
-reuse across manifests.
-
-[Playground runs](https://github.com/marcelolynch/LeanDownstreamPlayground/actions?query=branch%3Adocs-cache-experiments)
-with about 1100 Mathlib modules produced 3121 pages. The cold documentation step
-took 8 minutes and analyzed 609 modules plus core. A dependency update analyzed
-one module in 2 minutes 13 seconds. An exact cache hit analyzed none in
-2 minutes 11 seconds. HTML generation took about 43 seconds; compilation of
-doc-gen4 took about 85 seconds on a warm run. The cache occupied 37 MB, compared
-with 51 MB for the HTML cache. A larger Mathlib cache stayed under 130 MB.
-
-Repository caches share a capacity limit. Large `.lake` entries can displace
-the documentation cache. Inspect cache usage before disabling other caches:
+Large caches from other workflow steps can displace the documentation cache.
+Inspect the repository's entries and usage before disabling another cache:
 
 ```sh
 gh cache list

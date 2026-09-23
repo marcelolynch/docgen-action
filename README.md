@@ -131,11 +131,9 @@ Allowed values: `false`, `true`
 
 Default value: `true`
 
-The cache lets doc-gen4 reuse the analysis of unchanged modules. Each build generates the HTML and search data again. The key includes the toolchain, dependency manifest, and references file. If the exact key is absent, the action can reuse an entry for the same toolchain.
+The cache saves time by reusing module analysis. The action generates the API pages and search index again on each build. Set this input to `false` to disable the documentation cache.
 
-Set this input to `false` to disable the GitHub Actions cache for documentation analysis. Large dependency sets can take much longer to build. See [INTERNALS.md](INTERNALS.md) for the cache requirements and measurements.
-
-Other workflow caches share the repository's cache capacity. If documentation builds repeatedly miss the cache, inspect the entries with `gh cache list`. Large `.lake` caches can displace the documentation cache. Consider disabling the cache in `leanprover/lean-action` if its saved build time does not justify that storage.
+If builds repeatedly miss the cache, inspect the repository's entries with `gh cache list`. Other workflow caches share its capacity. See [the cache design](INTERNALS.md) for requirements and troubleshooting.
 
 ## Deprecated Parameters
 
