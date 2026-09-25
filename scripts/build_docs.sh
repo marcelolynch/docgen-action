@@ -4,8 +4,7 @@
 # treat unset variables as an error, and ensure errors in pipelines are not masked.
 set -euo pipefail
 
-# Build HTML documentation for the project
-# Copy the generated site to `$HOMEPAGE/docs`.
+# Build the HTML documentation of the project and copy it to `$HOMEPAGE/docs`.
 
 # Determine the `doc-gen4` revision to use as a dependency,
 # based on the `lean-toolchain` of this project:
@@ -88,13 +87,16 @@ fi
 # Disable an error message due to a non-blocking bug. See Zulip
 MATHLIB_NO_CACHE_ON_UPDATE=1 ~/.elan/bin/lake update "$NAME"
 
-# Keep the bibliography copy: Lake can reuse its analysis without writing it again.
-# Render into a clean directory so removed modules leave the site in this build.
+# Empty the output directory, so that the site holds only the pages of this
+# build. Keep references.bib: Lake skips the step that writes it when the
+# references file is unchanged.
 if [ -d .lake/build/doc ]; then
   find .lake/build/doc -mindepth 1 -maxdepth 1 ! -name references.bib -exec rm -rf {} +
 fi
+# The HTML step writes the per-module search data again.
 rm -f .lake/build/doc-data/declaration-data-*.bmp .lake/build/doc-data/backrefs-*.json
-# Unchanged analysis can leave these markers valid even when the HTML is absent.
+# Delete the markers of the HTML step. Lake checks a marker, not the pages, so a
+# marker from an earlier build would skip the step although the pages are gone.
 rm -f .lake/build/doc-data/*.docs_built{,.trace,.hash}
 rm -f .lake/build/doc-data/*.docsHeader_built{,.trace,.hash}
 
@@ -122,6 +124,6 @@ fi
 cd ../
 mkdir -p "$HOMEPAGE"
 sudo chown -R runner "$HOMEPAGE"
-# Replace the published API directory when the workspace already contains it.
+# Replace any earlier copy of the site.
 rm -rf -- "$HOMEPAGE/docs"
 cp -r docbuild/.lake/build/doc "$HOMEPAGE/docs"

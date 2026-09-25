@@ -1,77 +1,84 @@
 # Documentation cache
 
-Module analysis is expensive; HTML generation is comparatively cheap. The action
-caches analysis so that a dependency update can reuse work for unchanged modules.
-It generates the pages and search index again to avoid publishing obsolete files.
+doc-gen4 builds the documentation in two steps. The analysis step reads every
+module of the project and its dependencies into a database. This step is slow:
+it takes most of the build time. The HTML step writes the pages and the search
+index from the database in about a minute. The action caches the result of the
+analysis, so that a build after a dependency update analyzes only the modules
+that changed. It runs the HTML step on every build.
 
 ## Requirements
 
-The action relies on doc-gen4 to validate analysis inputs, resolve links, and
-remove obsolete modules. It assumes these upstream fixes are available in the
-revision selected for the project:
+The action needs [doc-gen4#416](https://github.com/leanprover/doc-gen4/pull/416)
+in the doc-gen4 version that the project uses. A restored database can hold the
+rows of modules that are no longer part of the project, for example after a
+dependency renames a module. With #416, doc-gen4 links only to pages that the
+build writes.
 
-- [#416](https://github.com/leanprover/doc-gen4/pull/416): declaration lookup uses
-  modules with pages in the output.
-- [#418](https://github.com/leanprover/doc-gen4/pull/418): analysis changes
-  invalidate HTML generation.
-- [#419](https://github.com/leanprover/doc-gen4/pull/419): library cleanup removes
-  obsolete modules before HTML generation.
+[doc-gen4#419](https://github.com/leanprover/doc-gen4/pull/419) removes those
+rows from the database, so that it does not grow with every rename. Before the
+action relies on it, #419 must keep the modules that a target names explicitly,
+and it must report an old database before it reads the new columns.
 
-Library cleanup must preserve modules explicitly requested for documentation.
-Schema validation must report an incompatible database before it attempts
-operations that require the new schema. These are prerequisites for integration
-with #419.
+## What the cache holds
 
-## What must stay consistent
+One cache entry holds the database, the marker file of each analyzed module
+with its trace, the module list of each library, and the bibliography data.
+`action.yml` lists the exact files. Lake reads a marker to decide whether a
+module needs analysis again. The markers and the database must therefore come
+from the same build: a marker without its rows in the database makes Lake skip
+an analysis that the build needs.
 
-The database and analysis markers form one cache entry. Lake uses the markers to
-check which modules need analysis; a marker without the corresponding database
-rows can cause Lake to skip necessary work. Library module lists and bibliography
-data belong to the same entry. The exact file patterns are in `action.yml`.
+The entry holds nothing that the HTML step writes. Before each build, the
+script empties the output directory, deletes the per-module search data, and
+deletes the markers of the HTML step, so that the HTML step runs and the site
+holds only the pages of this build. The script keeps the copy of the references
+file, because Lake skips the step that writes it when the references file is
+unchanged.
 
-Generated pages and search data must describe the current build. The script
-clears those files and their completion markers before HTML generation. It also
-replaces the published API directory after a successful build. The bibliography
-copy is preserved because Lake can skip its generation when its inputs are unchanged.
+## Modules that leave the project
 
-Database cleanup belongs to doc-gen4, which knows the modules of each library.
-An HTML manifest describes one invocation's roots, so the action cannot use it
-to decide which database rows are obsolete across several documentation targets.
+A dependency that the project drops can leave its rows in the database. The
+search index is written again on every build and does not show them, and #416
+keeps the links away from them. The tactics page is the exception: it lists
+every tactic in the database and links to its definition directly. A dropped
+dependency can therefore leave tactics on that page whose links are broken.
+This is open in doc-gen4.
 
-A removed dependency can leave unused database rows. Fresh search data excludes
-its declarations, and #416 filters declaration lookup. This does not cover every
-link: the tactics page reads all stored tactics and constructs definition links
-directly. Dropped dependencies can therefore leave stale tactic entries and
-broken links. That upstream limitation remains open.
+## The cache key
 
-## Reuse and recovery
+The key has two parts: a hash of the toolchain, then a hash of the manifest
+and the references file. A dependency update changes the second part, so no
+entry has the exact key. `actions/cache` then restores the newest entry with
+the same toolchain part (the `restore-keys` input), and Lake analyzes only the
+modules whose inputs changed. At the end of the job, `actions/cache` saves the
+result under the new key.
 
-A dependency update should preserve reusable analysis, while a toolchain change
-should start a separate cache. On an exact cache miss, `actions/cache` restores
-the newest accessible entry whose key starts with the supplied `restore-keys`
-prefix. That prefix includes the toolchain hash. Lake checks the restored
-analysis against the current inputs.
+The toolchain part keeps the entries of different doc-gen4 versions apart. The
+script uses the doc-gen4 tag that matches the toolchain, and doc-gen4 refuses a
+database from a version with a different schema. For the toolchains that use
+the `main` or `nightly-testing` branch of doc-gen4, the version can change
+under the same toolchain. When doc-gen4 reports `Database schema is outdated`,
+the script deletes the build directory and builds once more. Any other failure,
+and a failed second build, stop the job.
 
-The script normally selects the doc-gen4 release tag that matches the toolchain.
-Its `main` and `nightly-testing` choices can move, so the toolchain hash alone
-does not guarantee database compatibility. When doc-gen4 reports
-`Database schema is outdated`, the action discards the build directory and retries
-once. Other failures, including a failed retry, stop the build.
-
-An exact cache hit keeps its existing entry. A successful job saves a new entry
-when the exact key was absent. Change the cache format version when the required
-file set or its interpretation changes.
+`actions/cache` saves an entry only when no entry had the exact key, and it
+never replaces an entry. Change the version segment `v2` of the key when the
+set of cached files or their meaning changes.
 
 ## Cache capacity
 
-Large caches from other workflow steps can displace the documentation cache.
-Inspect the repository's entries and usage before disabling another cache:
+GitHub keeps at most 10 GB of cache per repository and removes the least
+recently used entries beyond that. `leanprover/lean-action` caches the whole
+`.lake` directory on every push. For a project that depends on Mathlib, each of
+its entries holds the Mathlib build files and takes several GB, so a few pushes
+can remove the documentation entry. To see which entries fill the cache:
 
 ```sh
 gh cache list
 gh api repos/<owner>/<repo>/actions/cache/usage
 ```
 
-Disabling the cache in `leanprover/lean-action` trades storage for build work.
-Mathlib can download its own compiled artifacts. Dependencies without an
-artifact cache need a source build on each run.
+`use-github-cache: false` on lean-action keeps the documentation entry. Lake
+then builds the project on every push. Mathlib downloads its own build files,
+but a dependency without such a download is built from source every time.

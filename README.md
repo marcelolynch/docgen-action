@@ -131,9 +131,9 @@ Allowed values: `false`, `true`
 
 Default value: `true`
 
-The cache saves time by reusing module analysis. The action generates the API pages and search index again on each build. Set this input to `false` to disable the documentation cache.
+The action caches the doc-gen4 analysis of the project and its dependencies, so a build analyzes only the modules that changed. The API pages and the search index are written again on every build. Set this input to `false` to build without the cache.
 
-If builds repeatedly miss the cache, inspect the repository's entries with `gh cache list`. Other workflow caches share its capacity. See [the cache design](INTERNALS.md) for requirements and troubleshooting.
+GitHub keeps at most 10 GB of cache per repository and removes the least recently used entries beyond that. If every build analyzes all modules, other caches may have pushed out the documentation entry. List the entries with `gh cache list`. [INTERNALS.md](INTERNALS.md) describes what the cache holds.
 
 ## Deprecated Parameters
 
