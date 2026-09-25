@@ -13,19 +13,22 @@ The action needs [doc-gen4#416](https://github.com/leanprover/doc-gen4/pull/416)
 in the doc-gen4 version that the project uses. A restored database can hold the
 rows of modules that are no longer part of the project, for example after a
 dependency renames a module. With #416, doc-gen4 links only to pages that the
-build writes.
+build writes, so the first build after the rename has no links to the old
+module.
 
 [doc-gen4#419](https://github.com/leanprover/doc-gen4/pull/419) removes those
-rows from the database, so that it does not grow with every rename. Before the
-action relies on it, #419 must keep the modules that a target names explicitly,
-and it must report an old database before it reads the new columns.
+rows from the database, so that it does not grow with every rename. The action
+does not need #419 to produce a correct site.
 
 ## What the cache holds
 
-One cache entry holds the database, the marker file of each analyzed module
-with its trace, the module list of each library, and the bibliography data.
-`action.yml` lists the exact files. Lake reads a marker to decide whether a
-module needs analysis again. The markers and the database must therefore come
+Lake records each completed build step in a marker file, with a trace file
+that holds a hash of the inputs of the step. Lake runs the step again only when
+the marker is missing or the hash changed.
+
+One cache entry holds the database, the marker and trace of each analyzed
+module, the module list of each library, and the bibliography data.
+`action.yml` lists the files. The markers and the database must therefore come
 from the same build: a marker without its rows in the database makes Lake skip
 an analysis that the build needs.
 
@@ -39,30 +42,32 @@ unchanged.
 ## Modules that leave the project
 
 A dependency that the project drops can leave its rows in the database. The
-search index is written again on every build and does not show them, and #416
-keeps the links away from them. The tactics page is the exception: it lists
-every tactic in the database and links to its definition directly. A dropped
+search index is written again on every build and does not show them, and with
+#416 no page links to them. The tactics page is the exception: it lists every
+tactic in the database and links to its definition directly. A dropped
 dependency can therefore leave tactics on that page whose links are broken.
 This is open in doc-gen4.
 
 ## The cache key
 
-The key has two parts: a hash of the toolchain, then a hash of the manifest
-and the references file. A dependency update changes the second part, so no
-entry has the exact key. `actions/cache` then restores the newest entry with
-the same toolchain part (the `restore-keys` input), and Lake analyzes only the
-modules whose inputs changed. At the end of the job, `actions/cache` saves the
-result under the new key.
+The key is `docs-db-v2-<toolchain hash>-<manifest hash>`. The second hash
+covers the manifest and the references file. A dependency update changes the
+second hash, so no entry has the full key. The `restore-keys` input then makes
+`actions/cache` restore the newest entry whose key starts with
+`docs-db-v2-<toolchain hash>-`, and Lake analyzes only the modules whose inputs
+changed. At the end of the job, `actions/cache` saves the result under the new
+key.
 
-The toolchain part keeps the entries of different doc-gen4 versions apart. The
-script uses the doc-gen4 tag that matches the toolchain, and doc-gen4 refuses a
-database from a version with a different schema. For the toolchains that use
-the `main` or `nightly-testing` branch of doc-gen4, the version can change
-under the same toolchain. When doc-gen4 reports `Database schema is outdated`,
-the script deletes the build directory and builds once more. Any other failure,
-and a failed second build, stop the job.
+The toolchain hash keeps the entries of different doc-gen4 versions apart,
+because doc-gen4 refuses a database from a version with a different schema.
+`build_docs.sh` picks the doc-gen4 revision from the toolchain. For a release
+toolchain, it uses the doc-gen4 tag with the same name. For other toolchains,
+it uses the `main` or `nightly-testing` branch, so the doc-gen4 version can
+change under the same toolchain. When doc-gen4 reports `Database schema is
+outdated`, the script deletes the build directory and builds once more. Any
+other failure, and a failed second build, stop the job.
 
-`actions/cache` saves an entry only when no entry had the exact key, and it
+`actions/cache` saves an entry only when no entry had the full key, and it
 never replaces an entry. Change the version segment `v2` of the key when the
 set of cached files or their meaning changes.
 
